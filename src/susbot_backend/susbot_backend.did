@@ -1,0 +1,8 @@
+type ScanResult = record {
+  "score" : nat8;
+  "summary" : text;
+  "risks" : vec text;
+};
+service : {
+  "analyze_address" : (text) -> (ScanResult) query;
+}

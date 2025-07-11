@@ -1,0 +1,26 @@
+{
+  "canisters": {
+    "susbot_backend": {
+      "candid": "src/susbot_backend/susbot_backend.did",
+      "package": "susbot_backend",
+      "type": "rust"
+    },
+    "susbot_frontend": {
+      "dependencies": [
+        "susbot_backend"
+      ],
+      "source": [
+        "src/susbot_frontend/dist"
+      ],
+      "type": "assets"
+    }
+  },
+  "defaults": {
+    "build": {
+      "args": "",
+      "packtool": ""
+    }
+  },
+  "output_env_file": ".env",
+  "version": 1
+}
