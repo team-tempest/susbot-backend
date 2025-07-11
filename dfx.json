@@ -1,18 +1,9 @@
 {
   "canisters": {
     "susbot_backend": {
-      "candid": "src/susbot_backend/susbot_backend.did",
+      "type": "rust",
       "package": "susbot_backend",
-      "type": "rust"
-    },
-    "susbot_frontend": {
-      "dependencies": [
-        "susbot_backend"
-      ],
-      "source": [
-        "src/susbot_frontend/dist"
-      ],
-      "type": "assets"
+      "candid": "src/susbot_backend/susbot_backend.did"
     }
   },
   "defaults": {
