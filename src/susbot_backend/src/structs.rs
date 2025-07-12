@@ -26,10 +26,20 @@ pub struct EtherscanApiResponse {
     pub result: Vec<EtherscanApiResult>,
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(serde::Deserialize, Serialize ,Debug)]
 pub struct EtherscanApiResult {
     #[serde(rename = "SourceCode")]
     pub source_code: String,
     #[serde(rename = "ContractName")]
     pub contract_name: String,
+}
+
+#[derive(serde::Deserialize, Debug)]
+pub struct SourceFile {
+    pub content: String,
+}
+
+#[derive(serde::Deserialize, Debug)]
+pub struct ContractSources {
+    pub sources: std::collections::HashMap<String, SourceFile>,
 }
