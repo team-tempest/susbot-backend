@@ -6,10 +6,17 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [lib]
-crate-type = ["cdylib"]
+name = "susbot_backend"
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 candid = "0.10"
-ic-cdk = "0.17"
+ic-cdk = "0.18.5"
 serde = "1.0"
 serde_derive = "1.0"
+serde_json = "1.0"
+num-bigint = "0.4.6"
+
+[dev-dependencies]
+pocket-ic = "9.0.2"
