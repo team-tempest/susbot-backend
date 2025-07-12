@@ -33,3 +33,27 @@ pub struct EtherscanApiResult {
     #[serde(rename = "ContractName")]
     pub contract_name: String,
 }
+
+#[derive(Deserialize, Debug)]
+pub struct SourceFile {
+    pub content: String,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct ContractSources {
+    pub sources: std::collections::HashMap<String, SourceFile>,
+}
+
+impl ContractSources {
+    pub fn to_string(&self) -> String {
+        self.sources
+            .values()
+            .map(|file| file.content.as_str())
+            .collect::<Vec<&str>>()
+            .join("\n")
+    }
+    
+    pub fn from_string(string: &str) -> serde_json::Result<Self> {
+        serde_json::from_str::<ContractSources>(string)
+    }
+}
