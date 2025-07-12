@@ -63,7 +63,7 @@ fn test_contract_with_critical_risks() {
 
     assert_eq!(0, scan_result.score);
     assert_eq!(3, scan_result.risks.len());
-    assert!(scan_result.risks.iter().any(|r| r.contains("[Critical] Self-destruct")));
+    assert!(scan_result.risks.iter().any(|r| r.contains("[Critical] Self-Destruct")));
     assert!(scan_result.risks.iter().any(|r| r.contains("[High] tx.origin Authentication")));
     assert!(scan_result.risks.iter().any(|r| r.contains("[Low] Outdated Compiler Version")));
     assert_eq!(scan_result.summary, "Analysis of 'VulnerableContract' complete. Found 1 critical, 1 high, 0 medium, 1 low, and 0 informational risks. Final Score: 0");

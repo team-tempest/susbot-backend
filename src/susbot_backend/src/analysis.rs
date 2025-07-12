@@ -56,10 +56,21 @@ pub fn analyze_source_code(source_code: &str) -> AnalysisResult {
     let mut score: i32 = 100;
     let mut risks = Vec::new();
 
+    examine_checks(source_code, &mut score, &mut risks);
+
+    prevent_negative_scores(&mut score);
+
+    AnalysisResult {
+        score: score as u8,
+        risks,
+    }
+}
+
+fn examine_checks(source_code: &str, score: &mut i32, risks: &mut Vec<FoundRisk>) {
     for check in CHECKS.iter() {
         let re = Regex::new(check.pattern).unwrap_or_else(|_| panic!("Invalid regex pattern: {}", check.pattern));
         if re.is_match(source_code) {
-            score -= check.score_impact;
+            *score -= check.score_impact;
             risks.push(FoundRisk {
                 check_name: check.name,
                 description: check.description,
@@ -67,14 +78,11 @@ pub fn analyze_source_code(source_code: &str) -> AnalysisResult {
             });
         }
     }
+}
 
-    if score < 0 {
-        score = 0;
-    }
-
-    AnalysisResult {
-        score: score as u8,
-        risks,
+fn prevent_negative_scores(score: &mut i32) {
+    if *score < 0 {
+        *score = 0;
     }
 }
 

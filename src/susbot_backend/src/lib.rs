@@ -1,19 +1,18 @@
-pub mod structs;
 pub mod analysis;
+pub mod structs;
 
-pub use crate::structs::{EtherscanApiResponse, ScanResult, EtherscanApiResult};
-pub use crate::analysis::{AnalysisResult};
-use candid::Nat;
-use ic_cdk::management_canister::{
-    http_request, HttpRequestArgs, HttpMethod, HttpRequestResult,
-};
-use ic_cdk::update;
+pub use crate::analysis::AnalysisResult;
 use crate::structs::ContractSources;
+pub use crate::structs::{EtherscanApiResponse, EtherscanApiResult, ScanResult};
+use analysis::RiskLevel::{Critical, High, Info, Low, Medium};
+use candid::Nat;
+use ic_cdk::management_canister::{http_request, HttpMethod, HttpRequestArgs, HttpRequestResult};
+use ic_cdk::update;
 
-// IMPORTANT: In a real-world application, this API key should be stored securely
-// using a service like IC secrets management, not hardcoded.
 const ETHERSCAN_API_KEY: &str = option_env!("ETHERSCAN_API_KEY")
     .expect("ETHERSCAN_API_KEY environment variable not set during build.");
+
+const UNVERIFIED_CONTRACT_NEUTRAL_SCORE: u8 = 50;
 
 #[update]
 async fn analyze_address(address: String) -> ScanResult {
@@ -25,9 +24,10 @@ async fn analyze_address(address: String) -> ScanResult {
 
     match http_request(&request).await {
         Ok(response) => process_response(response),
-        Err(err) => {
-            ScanResult::new_error("HTTP request to Etherscan failed. Error: {}", vec![err.to_string()])
-        }
+        Err(err) => ScanResult::new_error(
+            "HTTP request to Etherscan failed. Error: {}",
+            vec![err.to_string()],
+        ),
     }
 }
 
@@ -79,37 +79,31 @@ fn process_response(response: HttpRequestResult) -> ScanResult {
 /// This function handles cases where the source code is a single file, a JSON object
 /// of multiple files, or a double-encoded JSON string for standard-json-input formats.
 pub fn extract_true_source_code(etherscan_source: &str) -> String {
-    // Case 1: Standard-JSON-Input format (double-encoded JSON)
-    if etherscan_source.starts_with("{{") && etherscan_source.ends_with("}}") {
+    if is_double_encoded_json(etherscan_source) {
         let inner_json_str = &etherscan_source[1..etherscan_source.len() - 1];
-        if let Ok(sources) = serde_json::from_str::<ContractSources>(inner_json_str) {
-            return sources
-                .sources
-                .values()
-                .map(|file| file.content.as_str())
-                .collect::<Vec<&str>>()
-                .join("\n");
+        if let Ok(sources) = ContractSources::from_string(inner_json_str) {
+            return sources.to_string();
         }
     }
 
-    // Case 2: Simple JSON object with a 'sources' key
-    if let Ok(sources) = serde_json::from_str::<ContractSources>(etherscan_source) {
-        return sources
-            .sources
-            .values()
-            .map(|file| file.content.as_str())
-            .collect::<Vec<&str>>()
-            .join("\n");
+    if let Ok(sources) = ContractSources::from_string(etherscan_source) {
+        return sources.to_string();
     }
 
-    // Case 3: A single, flat source file (not JSON)
+    not_json_to_string(etherscan_source)
+}
+
+fn not_json_to_string(etherscan_source: &str) -> String {
     etherscan_source.to_string()
 }
 
+fn is_double_encoded_json(etherscan_source: &str) -> bool {
+    etherscan_source.starts_with("{{") && etherscan_source.ends_with("}}")
+}
 
 /// Processes the parsed data from the Etherscan API and builds the final ScanResult.
 fn process_etherscan_data(etherscan_data: EtherscanApiResponse) -> ScanResult {
-    if etherscan_data.status == "1" && !etherscan_data.result.is_empty() {
+    if is_scan_sucessful(&etherscan_data) {
         let contract_info = &etherscan_data.result[0];
 
         if contract_info.source_code.is_empty() {
@@ -122,7 +116,7 @@ fn process_etherscan_data(etherscan_data: EtherscanApiResponse) -> ScanResult {
                 contract_info.contract_name
             )];
             ScanResult {
-                score: 50, // Neutral score for unverified contracts
+                score: UNVERIFIED_CONTRACT_NEUTRAL_SCORE,
                 summary,
                 risks,
             }
@@ -130,32 +124,7 @@ fn process_etherscan_data(etherscan_data: EtherscanApiResponse) -> ScanResult {
             let true_source_code = extract_true_source_code(&contract_info.source_code);
             let analysis_result = analysis::analyze_source_code(&true_source_code);
 
-            let mut critical_risks = 0;
-            let mut high_risks = 0;
-            let mut medium_risks = 0;
-            let mut low_risks = 0;
-            let mut info_risks = 0;
-
-            for risk in &analysis_result.risks {
-                match risk.risk_level {
-                    analysis::RiskLevel::Critical => critical_risks += 1,
-                    analysis::RiskLevel::High => high_risks += 1,
-                    analysis::RiskLevel::Medium => medium_risks += 1,
-                    analysis::RiskLevel::Low => low_risks += 1,
-                    analysis::RiskLevel::Info => info_risks += 1,
-                }
-            }
-
-            let summary = format!(
-                "Analysis of '{}' complete. Found {} critical, {} high, {} medium, {} low, and {} informational risks. Final Score: {}",
-                contract_info.contract_name,
-                critical_risks,
-                high_risks,
-                medium_risks,
-                low_risks,
-                info_risks,
-                analysis_result.score
-            );
+            let summary = create_summary_for_verified(contract_info, &analysis_result);
 
             let risks = analysis_result
                 .risks
@@ -175,6 +144,39 @@ fn process_etherscan_data(etherscan_data: EtherscanApiResponse) -> ScanResult {
             vec![etherscan_data.message],
         )
     }
+}
+
+fn is_scan_sucessful(etherscan_data: &EtherscanApiResponse) -> bool {
+    etherscan_data.status == "1" && !etherscan_data.result.is_empty()
+}
+
+fn create_summary_for_verified(contract_info: &EtherscanApiResult, analysis_result: &AnalysisResult) -> String {
+    let mut critical_risks = 0;
+    let mut high_risks = 0;
+    let mut medium_risks = 0;
+    let mut low_risks = 0;
+    let mut info_risks = 0;
+
+    for risk in &analysis_result.risks {
+        match risk.risk_level {
+            Critical => critical_risks += 1,
+            High => high_risks += 1,
+            Medium => medium_risks += 1,
+            Low => low_risks += 1,
+            Info => info_risks += 1,
+        }
+    }
+
+    format!(
+        "Analysis of '{}' complete. Found {} critical, {} high, {} medium, {} low, and {} informational risks. Final Score: {}",
+        contract_info.contract_name,
+        critical_risks,
+        high_risks,
+        medium_risks,
+        low_risks,
+        info_risks,
+        analysis_result.score
+    )
 }
 
 ic_cdk::export_candid!();
