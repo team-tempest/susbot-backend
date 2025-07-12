@@ -24,7 +24,7 @@ impl RiskLevel {
 pub struct AnalysisCheck {
     pub name: &'static str,
     pub description: &'static str,
-    pub pattern: &'static str, // This will now be a regex pattern
+    pub pattern: &'static str,
     pub risk_level: RiskLevel,
     pub score_impact: i32,
 }
@@ -68,7 +68,6 @@ pub fn analyze_source_code(source_code: &str) -> AnalysisResult {
         }
     }
 
-    // Ensure score doesn't go below 0
     if score < 0 {
         score = 0;
     }
@@ -81,11 +80,11 @@ pub fn analyze_source_code(source_code: &str) -> AnalysisResult {
 
 pub const CHECKS: [AnalysisCheck; 9] = [
     AnalysisCheck {
-        name: "Self-destruct",
-        description: "The 'selfdestruct' function can be used to destroy a contract, which can be dangerous if not handled properly.",
-        pattern: r"\bselfdestruct\b",
+        name: "Self-Destruct",
+        description: "The contract can be destroyed by its owner, removing it from the blockchain and sending all its funds to a designated address.",
+        pattern: r"selfdestruct\s*\(|suicide\s*\(",
         risk_level: RiskLevel::Critical,
-        score_impact: 100,
+        score_impact: 70,
     },
     AnalysisCheck {
         name: "Delegate Call",

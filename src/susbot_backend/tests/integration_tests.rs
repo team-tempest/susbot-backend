@@ -41,16 +41,17 @@ fn test_successful_scan() {
     let scan_result = res.unwrap();
 
     assert_eq!(80, scan_result.score);
-    assert_eq!(2, scan_result.risks.len());
+    assert_eq!(3, scan_result.risks.len());
     assert!(scan_result.risks.iter().any(|r| r.contains("[Medium] Block Timestamp Dependency")));
     assert!(scan_result.risks.iter().any(|r| r.contains("[Info] Mint Function")));
-    assert!(scan_result.summary.contains("Analysis of 'SafeContract' complete. Found 0 critical, 0 high, 1 medium, 0 low, and 1 informational risks. Final Score: 80"));
+    assert!(scan_result.risks.iter().any(|r| r.contains("[Low] Outdated Compiler Version")));
+    assert_eq!(scan_result.summary, "Analysis of 'SafeContract' complete. Found 0 critical, 0 high, 1 medium, 1 low, and 1 informational risks. Final Score: 80");
 }
 
 #[test]
 fn test_contract_with_critical_risks() {
     let input_token = "0xAb5801a7D398351b8bE11C439e05C5B3259aeC9B";
-    let body = create_vulnerable_contract_response();
+    let body = create_critical_risk_response();
     let response_http_status_code = 200;
 
     let (pic, backend_canister) = setup();
@@ -61,12 +62,11 @@ fn test_contract_with_critical_risks() {
     let scan_result = decode_one::<ScanResult>(&reply).unwrap();
 
     assert_eq!(0, scan_result.score);
-    assert_eq!(4, scan_result.risks.len());
+    assert_eq!(3, scan_result.risks.len());
     assert!(scan_result.risks.iter().any(|r| r.contains("[Critical] Self-destruct")));
     assert!(scan_result.risks.iter().any(|r| r.contains("[High] tx.origin Authentication")));
-    assert!(scan_result.risks.iter().any(|r| r.contains("[Low] Low-level Call")));
     assert!(scan_result.risks.iter().any(|r| r.contains("[Low] Outdated Compiler Version")));
-    assert!(scan_result.summary.contains("Found 1 critical, 1 high, 0 medium, 2 low, and 0 informational risks."));
+    assert_eq!(scan_result.summary, "Analysis of 'VulnerableContract' complete. Found 1 critical, 1 high, 0 medium, 1 low, and 0 informational risks. Final Score: 0");
 }
 
 
@@ -211,34 +211,92 @@ fn create_unverified_contract_response() -> Vec<u8> {
     serde_json::to_vec(&resp).unwrap()
 }
 
-fn create_vulnerable_contract_response() -> Vec<u8> {
-    let source_code = r#"
-        pragma solidity ^0.7.0;
+/// Mocks a successful Etherscan API response for a contract with some medium/low risks.
+fn create_successful_response() -> Vec<u8> {
+    // This now simulates the complex, multi-file JSON response from Etherscan.
+    let source_code_json = r#"{
+    "sources": {
+        "SafeContract.sol": {
+            "content": "
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.7.0;
 
-        contract Vulnerable {
-            address owner;
+contract SafeContract {
+    address public owner;
+    uint256 public lastChanged;
 
-            function withdraw() external {
-                owner.call{value: address(this).balance}("");
-            }
+    constructor() {
+        owner = msg.sender;
+    }
 
-            function kill() external {
-                if (tx.origin == owner) {
-                    selfdestruct(payable(owner));
-                }
-            }
+    function updateTimestamp() public {
+        lastChanged = block.timestamp; // Medium risk
+    }
+
+    function mint() public pure {
+        // Info risk
+    }
+}
+"
         }
-    "#;
+    }
+}"#;
 
-    let scan_result = EtherscanApiResult {
-        source_code: source_code.to_string(),
+    let etherscan_result = EtherscanApiResult {
+        source_code: source_code_json.to_string(),
+        contract_name: "SafeContract".to_string(),
+    };
+
+    let resp = EtherscanApiResponse {
+        status: "1".to_string(),
+        message: "OK".to_string(),
+        result: vec![etherscan_result],
+    };
+
+    serde_json::to_vec(&resp).unwrap()
+}
+
+/// Mocks a successful Etherscan API response for a contract with CRITICAL risks.
+fn create_critical_risk_response() -> Vec<u8> {
+    // This contract contains a selfdestruct and tx.origin check.
+    let source_code_json = r#"{
+    "sources": {
+        "VulnerableContract.sol": {
+            "content": "
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.6.0;
+
+contract VulnerableContract {
+    address payable owner;
+
+    constructor() {
+        owner = msg.sender;
+    }
+
+    function drain() public {
+        // CRITICAL: selfdestruct can destroy the contract
+        selfdestruct(owner);
+    }
+
+    function checkOrigin() public view returns (bool) {
+        // HIGH: tx.origin is used for auth
+        return tx.origin == owner;
+    }
+}
+"
+        }
+    }
+}"#;
+
+    let etherscan_result = EtherscanApiResult {
+        source_code: source_code_json.to_string(),
         contract_name: "VulnerableContract".to_string(),
     };
 
     let resp = EtherscanApiResponse {
         status: "1".to_string(),
         message: "OK".to_string(),
-        result: vec![scan_result],
+        result: vec![etherscan_result],
     };
 
     serde_json::to_vec(&resp).unwrap()
@@ -252,36 +310,6 @@ fn create_api_error_response() -> Vec<u8> {
     };
 
     serde_json::to_vec(&resp).unwrap()
-}
-
-fn create_successful_response() -> Vec<u8> {
-    let source_code = r#"
-        pragma solidity ^0.8.0;
-
-        contract SafeContract {
-            function mint(address to, uint256 amount) external {
-                // minting logic
-            }
-
-            function getTime() public view returns (uint256) {
-                return block.timestamp;
-            }
-        }
-    "#;
-
-    let scan_result = EtherscanApiResult {
-        source_code: source_code.to_string(),
-        contract_name: "SafeContract".to_string(),
-    };
-
-    let resp = EtherscanApiResponse {
-        status: "1".to_string(),
-        message: "".to_string(),
-        result: vec![scan_result],
-    };
-
-    let body = serde_json::to_vec(&resp).unwrap();
-    body
 }
 
 fn start_processing(

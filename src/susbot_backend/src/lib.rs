@@ -2,19 +2,18 @@ pub mod structs;
 pub mod analysis;
 
 pub use crate::structs::{EtherscanApiResponse, ScanResult, EtherscanApiResult};
+pub use crate::analysis::{AnalysisResult};
 use candid::Nat;
 use ic_cdk::management_canister::{
     http_request, HttpRequestArgs, HttpMethod, HttpRequestResult,
 };
 use ic_cdk::update;
-use std::borrow::Cow;
 use crate::structs::ContractSources;
 
 // IMPORTANT: In a real-world application, this API key should be stored securely
 // using a service like IC secrets management, not hardcoded.
 const ETHERSCAN_API_KEY: &str = option_env!("ETHERSCAN_API_KEY")
     .expect("ETHERSCAN_API_KEY environment variable not set during build.");
-const CYCLES_PER_HTTP_REQUEST: u128 = 2_000_000_000;
 
 #[update]
 async fn analyze_address(address: String) -> ScanResult {
@@ -79,7 +78,7 @@ fn process_response(response: HttpRequestResult) -> ScanResult {
 /// Extracts and concatenates the true source code from the Etherscan API response.
 /// This function handles cases where the source code is a single file, a JSON object
 /// of multiple files, or a double-encoded JSON string for standard-json-input formats.
-fn extract_true_source_code(etherscan_source: &str) -> String {
+pub fn extract_true_source_code(etherscan_source: &str) -> String {
     // Case 1: Standard-JSON-Input format (double-encoded JSON)
     if etherscan_source.starts_with("{{") && etherscan_source.ends_with("}}") {
         let inner_json_str = &etherscan_source[1..etherscan_source.len() - 1];
