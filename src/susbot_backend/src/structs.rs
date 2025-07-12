@@ -8,6 +8,17 @@ pub struct ScanResult {
     pub risks: Vec<String>,
 }
 
+impl ScanResult {
+    /// Creates a new error ScanResult.
+    pub fn new_error(summary: &str, risks: Vec<String>) -> Self {
+        Self {
+            score: 0,
+            summary: summary.to_string(),
+            risks,
+        }
+    }
+}
+
 #[derive(Deserialize, Serialize, Debug)]
 pub struct EtherscanApiResponse {
     pub status: String,

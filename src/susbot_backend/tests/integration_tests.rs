@@ -103,8 +103,7 @@ fn test_etherscan_api_error() {
 
     assert_eq!(0, scan_result.score);
     assert!(scan_result.summary.contains("Etherscan API returned an error"));
-    assert!(scan_result.summary.contains("NOTOK: Invalid Address format"));
-    assert!(scan_result.risks.is_empty());
+    assert!(scan_result.risks.get(0).unwrap().contains("NOTOK: Invalid Address format"));
 }
 
 #[test]
