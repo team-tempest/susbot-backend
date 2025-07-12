@@ -1,33 +1,11 @@
+pub mod structs;
+
+pub use crate::structs::{EtherscanApiResponse, ScanResult, EtherscanApiResult};
 use candid::{CandidType, Deserialize};
-use ic_cdk::api::management_canister::http_request::{http_request, CanisterHttpRequestArgument, HttpMethod};
-use ic_cdk::{query, update};
-use serde_json::Value;
-
-// --- Data Structures ---
-
-#[derive(CandidType, Deserialize, Clone)]
-struct ScanResult {
-    score: u8,
-    summary: String,
-    risks: Vec<String>,
-}
-
-#[derive(Deserialize, Debug)]
-struct EtherscanApiResponse {
-    status: String,
-    message: String,
-    result: Vec<EtherscanApiResult>,
-}
-
-#[derive(Deserialize, Debug)]
-struct EtherscanApiResult {
-    #[serde(rename = "SourceCode")]
-    source_code: String,
-    #[serde(rename = "ContractName")]
-    contract_name: String,
-}
-
-// --- Constants ---
+use ic_cdk::api::management_canister::http_request::{
+    http_request, CanisterHttpRequestArgument, HttpMethod,
+};
+use ic_cdk::update;
 
 // TODO: Replace this with your own Etherscan API key
 const ETHERSCAN_API_KEY: &str = "DFB3ZHKRG2PZYCB8M4I6EQS15NQQ638PBJ";
@@ -53,8 +31,8 @@ async fn analyze_address(address: String) -> ScanResult {
         url: url.clone(),
         method: HttpMethod::GET,
         body: None,
-        max_response_bytes: Some(2_000_000), // Max response size 2MB
-        transform: None, // We will not use a transform function for now
+        max_response_bytes: Some(2_000_000),
+        transform: None,                     
         headers: vec![],
     };
 
@@ -62,7 +40,7 @@ async fn analyze_address(address: String) -> ScanResult {
         Ok((response,)) => {
             let body_str = String::from_utf8(response.body)
                 .unwrap_or_else(|_| "Invalid UTF-8 in response body".to_string());
-            
+
             // Try to parse the JSON response
             let parsed_response: Result<EtherscanApiResponse, _> = serde_json::from_str(&body_str);
 
@@ -71,23 +49,35 @@ async fn analyze_address(address: String) -> ScanResult {
                     if etherscan_data.status == "1" && !etherscan_data.result.is_empty() {
                         let contract_info = &etherscan_data.result[0];
                         let summary = if contract_info.source_code.is_empty() {
-                            format!("Contract '{}' source code is NOT verified.", contract_info.contract_name)
+                            format!(
+                                "Contract '{}' source code is NOT verified.",
+                                contract_info.contract_name
+                            )
                         } else {
-                            format!("Successfully fetched source code for contract '{}'.", contract_info.contract_name)
+                            format!(
+                                "Successfully fetched source code for contract '{}'.",
+                                contract_info.contract_name
+                            )
                         };
                         ScanResult {
                             score: 50, // Placeholder score
                             summary,
-                            risks: vec![format!("Source Code Length: {}", contract_info.source_code.len())],
+                            risks: vec![format!(
+                                "Source Code Length: {}",
+                                contract_info.source_code.len()
+                            )],
                         }
                     } else {
                         ScanResult {
                             score: 0,
-                            summary: format!("Etherscan API returned an error: {}", etherscan_data.message),
+                            summary: format!(
+                                "Etherscan API returned an error: {}",
+                                etherscan_data.message
+                            ),
                             risks: vec![],
                         }
                     }
-                },
+                }
                 Err(e) => ScanResult {
                     score: 0,
                     summary: "Failed to parse Etherscan API response.".to_string(),
@@ -98,13 +88,9 @@ async fn analyze_address(address: String) -> ScanResult {
         Err((code, message)) => ScanResult {
             score: 0,
             summary: "HTTP request to Etherscan failed.".to_string(),
-            risks: vec![format!(
-                "Rejection Code: {:?}, Message: {}",
-                code, message
-            )],
+            risks: vec![format!("Rejection Code: {:?}, Message: {}", code, message)],
         },
     }
 }
 
-// Enable Candid export for wasm
 ic_cdk::export_candid!();
