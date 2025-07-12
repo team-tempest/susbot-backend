@@ -9,7 +9,8 @@ use ic_cdk::update;
 
 // IMPORTANT: In a real-world application, this API key should be stored securely
 // using a service like IC secrets management, not hardcoded.
-const ETHERSCAN_API_KEY: &str = "DFB3ZHKRG2PZYCB8M4I6EQS15NQQ638PBJ";
+const ETHERSCAN_API_KEY: &str =
+    option_env!("ETHERSCAN_API_KEY").expect("ETHERSCAN_API_KEY environment variable not set");
 const CYCLES_PER_HTTP_REQUEST: u128 = 2_000_000_000;
 
 #[update]
