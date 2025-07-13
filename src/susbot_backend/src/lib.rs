@@ -1,16 +1,23 @@
 pub mod analysis;
 pub mod structs;
 
-pub use crate::analysis::AnalysisResult;
-use crate::structs::ContractSources;
-pub use crate::structs::{EtherscanApiResponse, EtherscanApiResult, ScanResult};
+use crate::analysis::{AnalysisResult, FoundRisk};
+use crate::structs::{
+    ContractSources, EtherscanApiResponse, EtherscanApiResult, OpenAiMessage, OpenAiRequest,
+    OpenAiResponse, ScanResult,
+};
 use analysis::RiskLevel::{Critical, High, Info, Low, Medium};
 use candid::Nat;
-use ic_cdk::management_canister::{http_request, HttpMethod, HttpRequestArgs, HttpRequestResult};
+use ic_cdk::management_canister::{
+    http_request, HttpHeader, HttpMethod, HttpRequestArgs, HttpRequestResult,
+};
 use ic_cdk::update;
 
 const ETHERSCAN_API_KEY: &str = option_env!("ETHERSCAN_API_KEY")
     .expect("ETHERSCAN_API_KEY environment variable not set during build.");
+
+const OPENAI_API_KEY: &str = option_env!("OPENAI_API_KEY")
+    .expect("OPENAI_API_KEY environment variable not set during build.");
 
 const UNVERIFIED_CONTRACT_NEUTRAL_SCORE: u8 = 50;
 
@@ -23,10 +30,10 @@ async fn analyze_address(address: String) -> ScanResult {
     let request = build_etherscan_request(&address);
 
     match http_request(&request).await {
-        Ok(response) => process_response(response),
-        Err(err) => ScanResult::new_error(
-            "HTTP request to Etherscan failed. Error: {}",
-            vec![err.to_string()],
+        Ok(response) => process_response(response).await,
+        Err(error) => ScanResult::new_error(
+            "HTTP request to Etherscan failed.",
+            vec![format!("Error: {}", error.to_string())],
         ),
     }
 }
@@ -54,10 +61,10 @@ fn build_etherscan_request(address: &str) -> HttpRequestArgs {
 }
 
 /// Processes the HttpResponse from the Etherscan API.
-fn process_response(response: HttpRequestResult) -> ScanResult {
+async fn process_response(response: HttpRequestResult) -> ScanResult {
     if response.status >= Nat::from(200u32) && response.status < Nat::from(300u32) {
         match serde_json::from_slice::<EtherscanApiResponse>(&response.body) {
-            Ok(etherscan_data) => process_etherscan_data(etherscan_data),
+            Ok(etherscan_data) => process_etherscan_data(etherscan_data).await,
             Err(e) => ScanResult::new_error(
                 "Failed to parse Etherscan API response.",
                 vec![e.to_string()],
@@ -102,7 +109,7 @@ fn is_double_encoded_json(etherscan_source: &str) -> bool {
 }
 
 /// Processes the parsed data from the Etherscan API and builds the final ScanResult.
-fn process_etherscan_data(etherscan_data: EtherscanApiResponse) -> ScanResult {
+async fn process_etherscan_data(etherscan_data: EtherscanApiResponse) -> ScanResult {
     if is_scan_sucessful(&etherscan_data) {
         let contract_info = &etherscan_data.result[0];
 
@@ -111,20 +118,23 @@ fn process_etherscan_data(etherscan_data: EtherscanApiResponse) -> ScanResult {
                 "Contract '{}' source code is NOT verified.",
                 contract_info.contract_name
             );
-            let risks = vec![format!(
-                "Unverified contract: {}",
-                contract_info.contract_name
-            )];
             ScanResult {
                 score: UNVERIFIED_CONTRACT_NEUTRAL_SCORE,
                 summary,
-                risks,
+                risks: vec!["The contract source code is not verified on Etherscan.".to_string()],
             }
         } else {
             let true_source_code = extract_true_source_code(&contract_info.source_code);
             let analysis_result = analysis::analyze_source_code(&true_source_code);
 
-            let summary = create_summary_for_verified(contract_info, &analysis_result);
+            let ai_summary =
+                match get_ai_summary(&analysis_result, &contract_info.contract_name).await {
+                    Ok(summary) => summary,
+                    Err(e) => {
+                        ic_cdk::println!("AI summary failed: {}", e);
+                        create_summary_for_verified(contract_info, &analysis_result)
+                    }
+                };
 
             let risks = analysis_result
                 .risks
@@ -134,7 +144,7 @@ fn process_etherscan_data(etherscan_data: EtherscanApiResponse) -> ScanResult {
 
             ScanResult {
                 score: analysis_result.score,
-                summary,
+                summary: ai_summary,
                 risks,
             }
         }
@@ -150,7 +160,10 @@ fn is_scan_sucessful(etherscan_data: &EtherscanApiResponse) -> bool {
     etherscan_data.status == "1" && !etherscan_data.result.is_empty()
 }
 
-fn create_summary_for_verified(contract_info: &EtherscanApiResult, analysis_result: &AnalysisResult) -> String {
+fn create_summary_for_verified(
+    contract_info: &EtherscanApiResult,
+    analysis_result: &AnalysisResult,
+) -> String {
     let mut critical_risks = 0;
     let mut high_risks = 0;
     let mut medium_risks = 0;
@@ -177,6 +190,78 @@ fn create_summary_for_verified(contract_info: &EtherscanApiResult, analysis_resu
         info_risks,
         analysis_result.score
     )
+}
+
+async fn get_ai_summary(
+    analysis_result: &AnalysisResult,
+    contract_name: &str,
+) -> Result<String, String> {
+    let risks_json = serde_json::to_string_pretty(&analysis_result.risks)
+        .map_err(|e| format!("Failed to serialize risks: {}", e))?;
+
+    let prompt = format!(
+        "You are a web3 security expert. Analyze the following smart contract scan results for a contract named '{}' and provide a concise, easy-to-understand summary for a non-technical user. Explain the key risks and what they mean in simple terms. The security score is {}. Here are the detailed findings:\n{}",
+        contract_name, analysis_result.score, risks_json
+    );
+
+    let request_body = OpenAiRequest {
+        model: "gpt-3.5-turbo".to_string(),
+        messages: vec![
+            OpenAiMessage {
+                role: "system".to_string(),
+                content: "You are a helpful web3 security assistant.".to_string(),
+            },
+            OpenAiMessage {
+                role: "user".to_string(),
+                content: prompt,
+            },
+        ],
+    };
+
+    let request_body_bytes = serde_json::to_vec(&request_body)
+        .map_err(|e| format!("Failed to serialize OpenAI request: {}", e))?;
+
+    let request = HttpRequestArgs {
+        url: "https://api.openai.com/v1/chat/completions".to_string(),
+        method: HttpMethod::POST,
+        body: Some(request_body_bytes),
+        max_response_bytes: Some(2048 * 2),
+        transform: None,
+        headers: vec![
+            HttpHeader {
+                name: "Authorization".to_string(),
+                value: format!("Bearer {}", OPENAI_API_KEY),
+            },
+            HttpHeader {
+                name: "Content-Type".to_string(),
+                value: "application/json".to_string(),
+            },
+        ],
+    };
+
+    match http_request(&request).await {
+        Ok(response) => {
+            if response.status >= Nat::from(200u32) && response.status < Nat::from(300u32) {
+                let response_body: OpenAiResponse = serde_json::from_slice(&response.body)
+                    .map_err(|e| format!("Failed to parse OpenAI response: {}", e))?;
+                if let Some(choice) = response_body.choices.into_iter().next() {
+                    Ok(choice.message.content)
+                } else {
+                    Err("OpenAI response contained no choices.".to_string())
+                }
+            } else {
+                Err(format!(
+                    "OpenAI API returned an error. Status: {}, Body: {}",
+                    response.status,
+                    String::from_utf8_lossy(&response.body)
+                ))
+            }
+        }
+        Err(error) => Err(format!(
+            "HTTP request to OpenAI failed. Error {}",
+            error.to_string()
+        )),
+    }
 }
 
 ic_cdk::export_candid!();

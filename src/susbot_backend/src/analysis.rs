@@ -1,6 +1,7 @@
 use regex::Regex;
+use serde_derive::Serialize;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub enum RiskLevel {
     Critical,
     High,
@@ -29,7 +30,7 @@ pub struct AnalysisCheck {
     pub score_impact: i32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct FoundRisk {
     pub check_name: &'static str,
     pub description: &'static str,
