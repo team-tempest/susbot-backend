@@ -57,3 +57,30 @@ impl ContractSources {
         serde_json::from_str::<ContractSources>(string)
     }
 }
+
+#[derive(Serialize, Debug)]
+pub struct OpenAiRequest {
+    pub model: String,
+    pub messages: Vec<OpenAiMessage>,
+}
+
+#[derive(Serialize, Debug)]
+pub struct OpenAiMessage {
+    pub role: String,
+    pub content: String,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct OpenAiResponse {
+    pub choices: Vec<OpenAiChoice>,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct OpenAiChoice {
+    pub message: ResponseMessage,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct ResponseMessage {
+    pub content: String,
+}
