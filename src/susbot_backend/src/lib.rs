@@ -2,7 +2,7 @@ pub mod analysis;
 pub mod structs;
 
 use crate::analysis::AnalysisResult;
-use crate::structs::{
+pub use crate::structs::{
     ContractSources, EtherscanApiResponse, EtherscanApiResult, OpenAiMessage, OpenAiRequest,
     OpenAiResponse, ScanResult,
 };
