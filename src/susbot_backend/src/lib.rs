@@ -1,8 +1,8 @@
 pub mod analysis;
 pub mod structs;
 
-use crate::analysis::{AnalysisResult, FoundRisk};
-use crate::structs::{
+use crate::analysis::AnalysisResult;
+pub use crate::structs::{
     ContractSources, EtherscanApiResponse, EtherscanApiResult, OpenAiMessage, OpenAiRequest,
     OpenAiResponse, ScanResult,
 };
@@ -13,11 +13,15 @@ use ic_cdk::management_canister::{
 };
 use ic_cdk::update;
 
-const ETHERSCAN_API_KEY: &str = option_env!("ETHERSCAN_API_KEY")
-    .expect("ETHERSCAN_API_KEY environment variable not set during build.");
+const ETHERSCAN_API_KEY: &str = match option_env!("ETHERSCAN_API_KEY") {
+    Some(key) => key,
+    None => "demo_key_for_testing",
+};
 
-const OPENAI_API_KEY: &str = option_env!("OPENAI_API_KEY")
-    .expect("OPENAI_API_KEY environment variable not set during build.");
+const OPENAI_API_KEY: &str = match option_env!("OPENAI_API_KEY") {
+    Some(key) => key,
+    None => "demo_key_for_testing",
+};
 
 const UNVERIFIED_CONTRACT_NEUTRAL_SCORE: u8 = 50;
 
@@ -114,27 +118,37 @@ async fn process_etherscan_data(etherscan_data: EtherscanApiResponse) -> ScanRes
         let contract_info = &etherscan_data.result[0];
 
         if contract_info.source_code.is_empty() {
-            let summary = format!(
-                "Contract '{}' source code is NOT verified.",
-                contract_info.contract_name
-            );
+            // Create an AnalysisResult for unverified contract
+            let unverified_analysis = analysis::analyze_source_code_with_verification("", false);
+            
+            let ai_summary = match get_ai_summary(&unverified_analysis, &contract_info.contract_name).await {
+                Ok(summary) => summary,
+                Err(_e) => {
+                    format!(
+                        "Contract '{}' source code is NOT verified on Etherscan. \
+                        Without verified source code, it's impossible to audit the contract for security vulnerabilities. \
+                        This is a major red flag for transparency and security.",
+                        contract_info.contract_name
+                    )
+                }
+            };
+            
             ScanResult {
                 score: UNVERIFIED_CONTRACT_NEUTRAL_SCORE,
-                summary,
+                summary: ai_summary,
                 risks: vec!["The contract source code is not verified on Etherscan.".to_string()],
             }
         } else {
             let true_source_code = extract_true_source_code(&contract_info.source_code);
-            let analysis_result = analysis::analyze_source_code(&true_source_code);
+            let analysis_result = analysis::analyze_source_code_with_verification(&true_source_code, true);
 
-            let ai_summary =
-                match get_ai_summary(&analysis_result, &contract_info.contract_name).await {
-                    Ok(summary) => summary,
-                    Err(e) => {
-                        ic_cdk::println!("AI summary failed: {}", e);
-                        create_summary_for_verified(contract_info, &analysis_result)
-                    }
-                };
+            let ai_summary = match get_ai_summary(&analysis_result, &contract_info.contract_name).await {
+                Ok(summary) => summary,
+                Err(e) => {
+                    ic_cdk::println!("AI summary failed: {}", e);
+                    create_summary_for_verified(contract_info, &analysis_result)
+                }
+            };
 
             let risks = analysis_result
                 .risks
@@ -196,12 +210,32 @@ async fn get_ai_summary(
     analysis_result: &AnalysisResult,
     contract_name: &str,
 ) -> Result<String, String> {
-    let risks_json = serde_json::to_string_pretty(&analysis_result.risks)
+    let _risks_json = serde_json::to_string_pretty(&analysis_result.risks)
         .map_err(|e| format!("Failed to serialize risks: {}", e))?;
 
+    let risks_formatted = analysis_result.risks.iter()
+        .map(|r| format!("{}: {}", r.check_name, r.description))
+        .collect::<Vec<String>>()
+        .join("\n");
+
     let prompt = format!(
-        "You are a web3 security expert. Analyze the following smart contract scan results for a contract named '{}' and provide a concise, easy-to-understand summary for a non-technical user. Explain the key risks and what they mean in simple terms. The security score is {}. Here are the detailed findings:\n{}",
-        contract_name, analysis_result.score, risks_json
+        "You are a Web3 security analyst reviewing smart contract risks.\n\
+        Your task is to analyze the given smart contract, explain the security issues in simple terms, and assign a final trust score between 0 and 100. Return your response in strict JSON format.\n\n\
+        Input:\n\
+        - Contract Name: {}\n\
+        - Risks Detected:\n{}\n\n\
+        - Contract Traits:\n\
+          - Verified Source Code: {}\n\
+          - Good Token Distribution: {}\n\
+          - Contract Type: {}\n\n\
+        Please analyze these risks and provide a comprehensive summary with recommendations in valid JSON format. \
+        Focus on explaining technical risks in simple terms for non-technical users.\n\
+        The response should include verdict, summary, and recommendations fields.",
+        contract_name,
+        risks_formatted,
+        analysis_result.contract_traits.verified,
+        analysis_result.contract_traits.good_distribution,
+        analysis_result.contract_traits.contract_type
     );
 
     let request_body = OpenAiRequest {
@@ -209,7 +243,7 @@ async fn get_ai_summary(
         messages: vec![
             OpenAiMessage {
                 role: "system".to_string(),
-                content: "You are a helpful web3 security assistant.".to_string(),
+                content: "You are a helpful web3 security assistant. Always respond with valid JSON.".to_string(),
             },
             OpenAiMessage {
                 role: "user".to_string(),
@@ -225,7 +259,7 @@ async fn get_ai_summary(
         url: "https://api.openai.com/v1/chat/completions".to_string(),
         method: HttpMethod::POST,
         body: Some(request_body_bytes),
-        max_response_bytes: Some(2048 * 2),
+        max_response_bytes: Some(4096),
         transform: None,
         headers: vec![
             HttpHeader {

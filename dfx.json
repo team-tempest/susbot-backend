@@ -4,6 +4,10 @@
       "type": "rust",
       "package": "susbot_backend",
       "candid": "src/susbot_backend/susbot_backend.did"
+    },
+    "internet_identity": {
+      "type": "pull",
+      "id": "rdmx6-jaaaa-aaaaa-aaadq-cai"
     }
   },
   "defaults": {
